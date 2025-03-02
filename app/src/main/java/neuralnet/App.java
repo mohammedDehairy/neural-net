@@ -11,19 +11,46 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 public class App {
 
     public static void main(String[] args) throws IOException {
-        MultiLayerPerceptron mlp = new MultiLayerPerceptron(2, new int[] { 16, 16, 1 });
-        Value[][] train = buildTrainingData();
-        Value[] actual = buildLabelOutput();
+        int input = 4;
+        MultiLayerPerceptron mlp = new MultiLayerPerceptron(input, new int[] { 16, 16, 1 });
+        Value[][] allData = buildAllData(input);
+        List<Value[]> shuffeledList = Arrays.asList(allData);
+        Collections.shuffle(shuffeledList);
+        allData = shuffeledList.toArray(new Value[0][]);
+
+        normalize(allData, input);
+
+        Value[][] allTrain = buildAllTrainingData(allData, input);
+        Value[] allActual = buildAllLabelOutput(allData, input);
+
         double learningRate = -0.01;
 
+        Value[] trainingLabels = buildTrainingLabels(allActual, 0, allActual.length / 2);
+        Value[][] trainingData = buildData(allTrain, 0, allTrain.length / 2);
+        Value[] lastValues = train(mlp, learningRate, trainingData, trainingLabels);
+        writePredictions(lastValues, trainingLabels, "training.txt");
+
+        Value[] testLabels = buildTrainingLabels(allActual, allActual.length / 2, allActual.length / 2);
+        Value[][] testingData = buildData(allTrain, allTrain.length / 2, allTrain.length / 2);
+        Value[] predictions = predict(mlp, testingData, testLabels);
+        writePredictions(predictions, testLabels, "predictions.txt");
+    }
+
+    static double roundOff(double value) {
+        return (double) Math.round(value * 10000d) / 10000d;
+    }
+
+    private static Value[] train(MultiLayerPerceptron mlp, double learningRate, Value[][] train, Value[] actual) {
+        Value[] pred = null;
         for (int x = 0; x < 1000; x++) {
-            Value[] pred = new Value[actual.length];
+            pred = new Value[actual.length];
             Value netLoss = new Value(0.0, "netLoss");
 
             for (int i = 0; i < train.length; i++) {
@@ -55,53 +82,127 @@ public class App {
             }
 
             System.out.println("iteration: " + x);
-
-            if (x == 999) {
-                writePredictions(pred, actual);
-            }
         }
+        return pred;
     }
 
-    private static Value[][] buildTrainingData() throws IOException {
-        Value[][] train = new Value[100][2];
+    private static Value[] predict(MultiLayerPerceptron mlp, Value[][] input, Value[] actual) {
+        Value[] result = new Value[input.length];
+        for (int i = 0; i < input.length; i++) {
+            result[i] = mlp.activate(input[i])[0];
+            System.out.println("prediction: " + i);
+        }
+        return result;
+    }
+
+    private static Value[][] buildAllData(int input) throws IOException {
+        Value[][] train = new Value[100][input + 1];
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         InputStream is = classLoader.getResourceAsStream("train.csv");
         InputStreamReader streamReader = new InputStreamReader(is);
         BufferedReader br = new BufferedReader(streamReader);
         int i = 0;
+        min = new double[input];
+        max = new double[input];
+        for (int index = 0; index < input; index++) {
+            min[index] = Double.MAX_VALUE;
+            max[index] = Double.MIN_VALUE;
+        }
         for (String line; (line = br.readLine()) != null; i++) {
             String[] row = line.split(",");
-            double x1 = Double.parseDouble(row[1]);
-            double x2 = Double.parseDouble(row[2]);
-            train[i] = new Value[] { new Value(x1, "x1"), new Value(x2, "x2") };
+            Value[] data = new Value[input + 1];
+            for (int x = 0; x < input; x++) {
+                double xi = Double.parseDouble(row[x + 1]);
+                data[x] = new Value(xi, "x" + (x+1));
+
+                if (xi < min[x]) {
+                    min[x] = xi;
+                }
+
+                if (xi > max[x]) {
+                    max[x] = xi;
+                }
+            }
+            data[input] = new Value(Double.parseDouble(row[input + 1]), "label");
+            train[i] = data;
         }
         return train;
     }
 
-    private static Value[] buildLabelOutput() throws IOException {
-        Value[] actualLabels = new Value[100];
-        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
-        InputStream inputStream = classLoader.getResourceAsStream("train.csv");
-        InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
-        BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
-        int index = 0;
-        for (String line; (line = bufferedReader.readLine()) != null; index++) {
-            String[] row = line.split(",");
-            double value = Double.parseDouble(row[3]);
-            actualLabels[index] = new Value(value, "y");
-        }
-        return actualLabels;
-    }
+    private static double[] min;
+    private static double[] max;
 
-    private static void writePredictions(Value[] pred, Value[] labels) throws IOException {
-        Path resources = Paths.get(App.class.getResource("/").getPath());
-        String filePath = resources.toString() + "/predictions.txt";
-        Files.deleteIfExists(Paths.get(filePath));
-        try(FileWriter fileWriter = new FileWriter(filePath)) {
-            for (int i = 0; i < pred.length; i++) {
-                fileWriter.write(pred[i].getValue() + ", " + labels[i].getValue() + "\n");
+    private static void normalize(Value[][] trainingData, int input) {
+        for (int i = 0; i < trainingData.length; i++) {
+            Value[] row = trainingData[i];
+            for (int x = 0; x < input; x++) {
+                double minValue = min[x];
+                double maxValue = max[x];
+                double normalizedValue = ((row[x].getValue() - minValue) / (maxValue - minValue)) * 2 - 1;
+                row[x] = new Value(normalizedValue, row[x].getLabel());
             }
         }
+    }
+
+    private static Value[][] buildAllTrainingData(Value[][] allData, int input) {
+        Value[][] train = new Value[allData.length][input];
+
+        for (int i = 0; i < allData.length; i++) {
+            for (int x = 0; x < input; x++) {
+                train[i][x] = allData[i][x];
+            }
+        }
+        return train;
+    }
+
+    private static Value[] buildAllLabelOutput(Value[][] allData, int index) throws IOException {
+        Value[] result = new Value[allData.length];
+
+        for (int i = 0; i < allData.length; i++) {
+            result[i] = allData[i][index];
+        }
+        return result;
+    }
+
+    private static Value[][] buildData(Value[][] data, int offset, int length) {
+        Value[][] result = new Value[length][4];
+
+        for (int i = offset; i < offset + length; i++) {
+            result[i - offset] = data[i];
+        }
+        return result;
+    }
+
+    private static Value[] buildTrainingLabels(Value[] allLabels, int offset, int length) {
+        Value[] result = new Value[length];
+        
+        for (int i = offset; i < offset + length; i++) {
+            result[i - offset] = allLabels[i];
+        }
+        return result;
+    }
+
+    private static void writePredictions(Value[] pred, Value[] labels, String fileName) throws IOException {
+        Path resources = Paths.get(App.class.getResource("/").getPath());
+        String filePath = resources.toString() + "/" + fileName;
+        Files.deleteIfExists(Paths.get(filePath));
+        int diffLessThan20P = 0;
+        int differentSignCount = 0;
+        try(FileWriter fileWriter = new FileWriter(filePath)) {
+            for (int i = 0; i < pred.length; i++) {
+                double diff = Math.abs(Math.abs(pred[i].getValue() - labels[i].getValue()) / labels[i].getValue());
+                if (diff < 0.1) {
+                    diffLessThan20P++;
+                }
+                boolean diffSign = pred[i].getValue() * labels[i].getValue() < 0;
+                if (diffSign) {
+                    differentSignCount++;
+                }
+                fileWriter.write(roundOff(pred[i].getValue()) + ", " + labels[i].getValue() + (diffSign ? "*" : "") + (diff > 0.1 ? "*" : "") + "\n");
+            }
+        }
+        System.out.println("Accuracy: " + ((double)diffLessThan20P / (double)pred.length) * 100 + "%");
+        System.out.println("different sign count: " + differentSignCount);
     
     }
 }

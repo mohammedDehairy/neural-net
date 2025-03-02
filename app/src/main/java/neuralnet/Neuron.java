@@ -2,6 +2,7 @@ package neuralnet;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class Neuron {
     private Value[] weights;
@@ -10,9 +11,9 @@ public final class Neuron {
     public Neuron(int neuronId, int layerId, int inputs) {
         this.weights = new Value[inputs];
         for (int i = 0; i < inputs; i++) {
-            weights[i] = new Value(Math.random(), "w" + Integer.toString(i) + " For Layer: " + layerId + " For Neuron: " + neuronId);
+            weights[i] = new Value(ThreadLocalRandom.current().nextDouble(-1, 1), "w" + Integer.toString(i) + " For Layer: " + layerId + " For Neuron: " + neuronId);
         }
-        this.bias = new Value(Math.random(), "b");
+        this.bias = new Value(ThreadLocalRandom.current().nextDouble(-1, 1), "b");
     }
 
     public Value activate(Value[] x) {
